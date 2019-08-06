@@ -38,8 +38,9 @@ def clean_mg_col(x):
 
 
 class main_page_scraper(object):
-    def __init__(self):
+    def __init__(self, proxy=None):
         self.ua = UserAgent()
+        self.proxy = proxy
         self.driver = self.setup_driver()
         self.main_url = 'http://analytical360.com/testresults'
         self.pages = ['Flower', 'Concentrate', 'Edible', 'Liquid', 'Topical']
@@ -47,6 +48,16 @@ class main_page_scraper(object):
 
 
     def setup_driver(self):
+        if self.proxy is not None:
+            http_proxy  = self.proxy#"ip_addr:port"
+            https_proxy = self.proxy#"ip_addr:port"
+
+            webdriver.DesiredCapabilities.FIREFOX['proxy']={
+                "httpProxy":http_proxy,
+                "sslProxy":https_proxy,
+                "proxyType":"MANUAL"
+            }
+
         driver = webdriver.Firefox()
         # driver.set_window_size(1920, 1080)
         return driver
@@ -196,6 +207,10 @@ if __name__ == '__main__':
             error404 = driver.find_element_by_class_name('error404')
             if error404 is not None:
                 print('404 error, skipping')
+                if r['pct'] is True:
+                    db['summary_tables_pct'].update_one({'_id': i}, {'$set': {'scraped': True}})
+                else:
+                    db['summary_tables_mg'].update_one({'_id': i}, {'$set': {'scraped': True}})
                 continue
 
         test_details_text = driver.find_element_by_class_name('ANLheader-left').text.split('\n')
@@ -210,9 +225,17 @@ if __name__ == '__main__':
 
         test_summary_text = driver.find_element_by_id('summary_table').text.split('\n')
         summary_details = {}
-        for t in test_summary_text:
-            key, val = t.split(': ')
-            summary_details[key.lower()] = val
+        # one had 'still pending' and ended up being empty
+        if test_summary_text != ['']:
+            for t in test_summary_text:
+                key, val = t.split(': ')
+                summary_details[key.lower()] = val
+        else:
+            if r['pct'] is True:
+                db['summary_tables_pct'].update_one({'_id': i}, {'$set': {'scraped': True}})
+            else:
+                db['summary_tables_mg'].update_one({'_id': i}, {'$set': {'scraped': True}})
+            continue
 
 
         potency_data = {}
@@ -301,5 +324,13 @@ def create_clean_dataset():
     smaller_df = df[columns].copy()
     smaller_df.columns = renamed_columns
     terp_df = smaller_df[smaller_df['ocimene'].notna()].copy()
-    db['clean_scraped_data'].insert_many(terp_df.to_dict('records'))
+
+    current_clean_scr_data = pd.DataFrame(list(db['clean_scraped_data'].find({}, {'_id': 0})))
+    if current_clean_scr_data.shape[0] > 0:
+        full_df = terp_df.append(current_clean_scr_data)
+        full_df.drop_duplicates(inplace=True, keep=False)
+    else:
+        full_df = terp_df
+
+    db['clean_scraped_data'].insert_many(full_df.to_dict('records'))
     conn.close()
