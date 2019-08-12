@@ -1,25 +1,30 @@
-# https://proxybroker.readthedocs.io/en/latest/examples.html
+"""Find 10 working HTTP(S) proxies and save them to a file."""
 
 import asyncio
 from proxybroker import Broker
 
-proxy_list = []
 
-async def show(proxies):
-    while True:
-        proxy = await proxies.get()
-        if proxy is None: break
-        print('Found proxy: %s' % proxy)
-        proxy_list.append(proxy)
+async def save(proxies, filename):
+    """Save proxies to a file."""
+    with open(filename, 'w') as f:
+        while True:
+            proxy = await proxies.get()
+            if proxy is None:
+                break
+            proto = 'https'
+            # row = '%s://%s:%d\n' % (proto, proxy.host, proxy.port)
+            row = '%s:%d\n' % (proxy.host, proxy.port)
+            f.write(row)
 
-proxies = asyncio.Queue()
-broker = Broker(proxies)
-tasks = asyncio.gather(
-    broker.find(types=['HTTP', 'HTTPS'], limit=10),
-    show(proxies))
 
-loop = asyncio.get_event_loop()
-loop.run_until_complete(tasks)
+def main():
+    proxies = asyncio.Queue()
+    broker = Broker(proxies)
+    tasks = asyncio.gather(broker.find(types=['HTTPS'], limit=10),
+                           save(proxies, filename='proxies.txt'))
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(tasks)
 
-proxy_json_0 = proxy_list[0].as_json()
-proxy_string = proxy_json_0['host'] + ':' + str(proxy_json_0['port'])
+
+if __name__ == '__main__':
+    main()

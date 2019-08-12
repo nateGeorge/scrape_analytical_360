@@ -16,7 +16,7 @@ def clean_pct_col(x):
     Converts percent column to numeric, replacing ND with NA.
     """
     x = x.replace('%', '')
-    if 'ND' in x:
+    if 'ND' in x or '< LOQ':
         x = 0
     else:
         x = float(x)
@@ -40,7 +40,16 @@ def clean_mg_col(x):
 class main_page_scraper(object):
     def __init__(self, proxy=None):
         self.ua = UserAgent()
-        self.proxy = proxy
+        if proxy is None:
+            import get_proxies as gp
+            gp.main()
+            with open('proxies.txt', 'r') as f:
+                proxies = f.read().strip().split('\n')
+
+            self.proxy = np.random.choice(proxies)
+        else:
+            self.proxy = proxy
+
         self.driver = self.setup_driver()
         self.main_url = 'http://analytical360.com/testresults'
         self.pages = ['Flower', 'Concentrate', 'Edible', 'Liquid', 'Topical']
@@ -161,9 +170,7 @@ class main_page_scraper(object):
         conn.close()
 
 
-
-
-if __name__ == '__main__':
+def main():
     scraper = main_page_scraper()
     # df = scraper.extract_all_tables()
     # Stores summary tables on main page.  Used to get links to detail pages.
@@ -291,10 +298,12 @@ if __name__ == '__main__':
         else:
             print('already scraped this page')
 
+    create_clean_dataset()
 
 
-    # load and clean detail data
+
 def create_clean_dataset():
+    # load and clean detail data
     conn = MongoClient()
     db = conn['analytical360']
     result = list(db['detail_data'].find())
@@ -334,3 +343,8 @@ def create_clean_dataset():
 
     db['clean_scraped_data'].insert_many(full_df.to_dict('records'))
     conn.close()
+
+
+
+if __name__ == '__main__':
+    pass
