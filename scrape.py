@@ -15,13 +15,21 @@ def clean_pct_col(x):
     """
     Converts percent column to numeric, replacing ND with NA.
     """
-    x = x.replace('%', '')
-    if 'ND' in x or '< LOQ':
+    if isinstance(x, float) or isinstance(x, int):
+        return x
+    elif 'ND' in x or '< LOQ':
         x = 0
     else:
-        x = float(x)
+        x = x.replace('%', '')
 
-    return x
+    return float(x)
+    # x = x.replace('%', '')
+    # if 'ND' in x or '< LOQ':
+    #     x = 0
+    # else:
+    #     x = float(x)
+    #
+    # return x
 
 
 def clean_mg_col(x):
@@ -309,13 +317,50 @@ def create_clean_dataset():
     result = list(db['detail_data'].find())
     df = pd.DataFrame(result)
 
+    # only use flowers for now
+    df = df[df['type'] == 'flower']
+
     # remove weird alphanumeric tails from some names
     df.loc[df['sample_name'].str.contains(' IN'), 'sample_name'] = df['sample_name'].apply(lambda x: re.sub(' IN*.', '', x))
-    good_names = df[df['sample_name'].apply(lambda x: len(x) > 5) & ~df['sample_name'].str.contains('#') & ~df['sample_name'].str.contains('Distillate')]['sample_name'].values
+
+    # Remove some duplicate names
+    # Abacus L40 is latest; all the Abacus strains seem to be the same
+    def remove_dupe_names(df, sample_name='Abacus'):
+        idxs = df[df['sample_name'].str.contains(sample_name)].index
+        df.drop(idxs[1:], inplace=True)
+        df.loc[idxs[0], 'sample_name'] = sample_name
+
+    for name in ['Abacus', 'God\'s Gift', 'ACDC', 'HTSU']:
+        remove_dupe_names(df, name)
+
+
+    # some names with \w\w\d\w at the end like 'EwokIC4U'
+    code_names_idxs = df[df['sample_name'].str.contains('\w\w\d\w$')].index
+    for c in code_names_idxs:
+        df.loc[c, 'sample_name'] = df.loc[c, 'sample_name'][:-4].strip()
+
+    # custom name cleaning
+    def change_name(df, old, new):
+        df.loc[df['sample_name'] == old, 'sample_name'] = new
+
+    name_pairs = [('Frank\'s Gift E', 'Frank\'s Gift'),
+                    ('AK-47 (Da Bakery)', 'AK-47'),
+                    ('Healing Hope L-33', 'Healing Hope'),
+                    ('UK Cheese  N', 'UK Cheese')]
+
+    for old, new in name_pairs:
+        change_name(df, old, new)
+
+
+    # some strange names like CHC-8493-001
+    weird_names_mask = df['sample_name'].str.match('\w\w\w-\d\d\d\d-\d\d\d')
+    weird_names = set(df[weird_names_mask]['sample_name'])
+    # some names have endings like GE1W
+    good_names = df[df['sample_name'].apply(lambda x: len(x) > 5) & ~df['sample_name'].str.contains('#') & ~df['sample_name'].str.contains('Distillate') & ~weird_names_mask]['sample_name'].values
     np.random.seed(42)  # set seed for reproducible results
     for i, r in df.iterrows():
         # a few names with only one number
-        if len(r['sample_name']) <= 2 or 'SS-' in r['sample_name'] or 'Distillate' in r['sample_name']:
+        if len(r['sample_name']) <= 2 or 'SS-' in r['sample_name'] or 'Distillate' in r['sample_name'] or r['sample_name'] in weird_names:
             sample_names = set(df['sample_name'].values)
             count = 2
             while True:
@@ -327,8 +372,8 @@ def create_clean_dataset():
 
             df.loc[i, 'sample_name'] = random_name
 
-    columns = ['sample_name', 'type', 'alpha pinene', 'beta pinene', 'caryophyllene', 'cbc', 'cbd', 'cbd total (cbd-a * 0,877 + cbd)', 'cbdv total (cbdv-a * 0,878 + cbdv)', 'cbg total (cbg-a * 0,878 + cbg)', 'cbn', 'thc total (thc-a * 0,877 + thc)', 'humulene', 'limonene', 'linalool', 'myrcene', 'ocimene', 'terpinolene']
-    renamed_columns = ['name', 'type', 'alpha_pinene', 'beta_pinene', 'caryophyllene', 'cbc', 'cbd', 'cbd_total', 'cbdv_total', 'cbg_total', 'cbn', 'thc_total', 'humulene', 'limonene', 'linalool', 'myrcene', 'ocimene', 'terpinolene']
+    columns = ['sample_name', 'type', 'alpha pinene', 'beta pinene', 'caryophyllene', 'cbc', 'cbd', 'cbd total (cbd-a * 0,877 + cbd)', 'cbg total (cbg-a * 0,878 + cbg)', 'cbn', 'thc total (thc-a * 0,877 + thc)', 'humulene', 'limonene', 'linalool', 'myrcene', 'ocimene', 'terpinolene']
+    renamed_columns = ['name', 'type', 'alpha_pinene', 'beta_pinene', 'caryophyllene', 'cbc', 'cbd', 'cbd_total', 'cbg_total', 'cbn', 'thc_total', 'humulene', 'limonene', 'linalool', 'myrcene', 'ocimene', 'terpinolene']
 
     smaller_df = df[columns].copy()
     smaller_df.columns = renamed_columns
@@ -336,10 +381,21 @@ def create_clean_dataset():
 
     current_clean_scr_data = pd.DataFrame(list(db['clean_scraped_data'].find({}, {'_id': 0})))
     if current_clean_scr_data.shape[0] > 0:
-        full_df = terp_df.append(current_clean_scr_data)
+        full_df = terp_df.append(current_clean_scr_data, sort=False)
         full_df.drop_duplicates(inplace=True, keep=False)
     else:
         full_df = terp_df
+
+    terpenes = ['alpha_pinene', 'beta_pinene', 'caryophyllene', 'humulene', 'limonene', 'linalool', 'myrcene', 'ocimene', 'terpinolene']
+    cannabinoids = ['cbc', 'cbd', 'cbd_total', 'cbg_total', 'cbn', 'thc_total']
+
+    for c in terpenes + cannabinoids:
+        full_df[c] = full_df[c].apply(clean_pct_col)
+        full_df[c] = full_df[c].astype(float)
+
+
+    # fill missing values with 0
+    full_df.fillna(0, inplace=True)
 
     db['clean_scraped_data'].insert_many(full_df.to_dict('records'))
     conn.close()
